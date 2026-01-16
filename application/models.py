@@ -12,3 +12,8 @@ class GossipModel(BaseModel):
     op: list
     strong_op: bool
     causal_ctx: list[int]
+
+
+class GossipMessageModel(BaseModel):
+    m: list[int]
+    q: str

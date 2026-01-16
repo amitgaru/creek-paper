@@ -34,3 +34,15 @@ class Request:
 
     def __str__(self):
         return f"Request(id={self.id}, op={self.op}, strong_op={self.strong_op}, causal_ctx={self.causal_ctx})"
+
+
+class Message:
+    def __init__(self, m: tuple[int], q: str):
+        self.m = tuple(m)
+        self.q = q
+
+    def to_json(self):
+        return {"m": list(self.m), "q": self.q}
+
+    def __str__(self):
+        return f"Message(m={self.m}, q={self.q})"

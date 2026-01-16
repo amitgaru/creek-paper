@@ -9,10 +9,9 @@ import requests
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
 
-from req import Request
-from operation import Operation
+from req import Request, Message
 from custom_logger import setup_logging
-from models import InvokeRequestModel, GossipModel
+from models import GossipMessageModel, InvokeRequestModel, GossipModel
 
 
 setup_logging()
@@ -38,20 +37,27 @@ MISSING_CONTEXT_OPS = set()
 BUFFER = set()
 DELIVERED = set()
 
+MSG_BUFFER = set()
+MSG_DELIVERED = set()
+MSG_RECEIVED = set()
+ORDERED_MESSAGES = list()
+UNORDERED_MESSAGES = set()
+
 
 def get_node_address(node_index):
     return f"http://{NODE_URLS[node_index]}"  # Placeholder for actual node address
 
 
-def check_dep(id):
+def predicate_check_dep(id):
     r = (COMMITTED + TENTATIVE).get(id, None)
     if r is None:
         return False
     return r.causal_ctx.issubset(CAUSAL_CTX)
 
 
-def CAB_cast(id, check_dep_fn):
-    pass
+def CAB_cast(m, q):
+    msg = Message(m, q)
+    RB_cast_message(msg)
 
 
 def RB_cast(r):
@@ -74,10 +80,51 @@ def RB_deliver(r):
         MISSING_CONTEXT_OPS.add(r)
 
 
+def RB_cast_message(msg):
+    logger.info("RB_cast_message called with msg %s", msg)
+    MSG_BUFFER.add(msg)
+
+
+def RB_deliver_msg(msg):
+    MSG_RECEIVED.add(msg.m)
+    if msg.m not in ORDERED_MESSAGES:
+        UNORDERED_MESSAGES.add(msg.m)
+
+
+def get_predicate(q):
+    if q == "check_dep":
+        return predicate_check_dep
+    return lambda x: False
+
+
+def test(msg_ids: set[int]):
+    for msg in msg_ids:
+        if msg.m not in MSG_RECEIVED or get_predicate(msg.q)(msg.m):
+            return False
+    return True
+
+
 def send_gossip(node_index, json_data):
     logger.info("Sending gossip to node %s", node_index)
     retries = 2
     url = f"{get_node_address(node_index)}/gossip"
+    for attempt in range(retries):
+        try:
+            logger.info(
+                "Attempt %s to send gossip to %s data %s", attempt + 1, url, json_data
+            )
+            resp = requests.post(url, json=json_data)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            logger.info("Attempt %s failed: %s", attempt + 1, e)
+    logger.info("Failed to send to %s after %s attempts", url, retries)
+
+
+def send_message_gossip(node_index, json_data):
+    logger.info("Sending gossip to node %s", node_index)
+    retries = 2
+    url = f"{get_node_address(node_index)}/gossip-msg"
     for attempt in range(retries):
         try:
             logger.info(
@@ -97,7 +144,7 @@ def random_sample_excluding(n, k, exclude):
 
 
 async def gossiping():
-    global BUFFER
+    global BUFFER, MSG_BUFFER
     K = 1
     logger.info("Gossiping task started with K=%s", K)
     while True:
@@ -110,6 +157,16 @@ async def gossiping():
                 logger.info("Response %s", resp)
 
             DELIVERED.add(r.id)
+
+        if MSG_BUFFER:
+            logger.info("Gossiping message data...")
+            k = random_sample_excluding(NO_NODES, K, node_id)
+            m = MSG_BUFFER.pop()
+            for i in k:
+                resp = send_message_gossip(i, m.to_json())
+                logger.info("Response %s", resp)
+
+            MSG_DELIVERED.add(m.m)
 
         await asyncio.sleep(0.001)
 
@@ -145,6 +202,13 @@ async def print_status():
         logger.info("BUFFER: %s", [r.id for r in BUFFER])
         logger.info("DELIVERED: %s", DELIVERED)
         logger.info("CAUSAL_CTX: %s", CAUSAL_CTX)
+        logger.info("MISSING_CONTEXT_OPS: %s", [r.id for r in MISSING_CONTEXT_OPS])
+        logger.info("MSG_BUFFER: %s", [m.m for m in MSG_BUFFER])
+        logger.info("MSG_DELIVERED: %s", MSG_DELIVERED)
+        logger.info("MSG_RECEIVED: %s", MSG_RECEIVED)
+        logger.info("ORDERED_MESSAGES: %s", ORDERED_MESSAGES)
+        logger.info("UNORDERED_MESSAGES: %s", UNORDERED_MESSAGES)
+        logger.info("\n------------------------End--------------------------\n")
         await asyncio.sleep(10)
 
 
@@ -178,7 +242,7 @@ async def invoke(request: InvokeRequestModel):
     )
     if r.strong_op:
         r.causal_ctx = CAUSAL_CTX - {x for x in TENTATIVE if r.is_lesser_than(x)}
-        CAB_cast(r.id, check_dep)
+        CAB_cast(r.id, "check_dep")
     CAUSAL_CTX.add(r.id)
     RB_cast(r)
     insert_into_tentative({r})
@@ -188,7 +252,7 @@ async def invoke(request: InvokeRequestModel):
 
 @app.post("/gossip")
 async def gossip(request: GossipModel):
-    global DELIVERED, BUFFER
+    global BUFFER, DELIVERED
     logger.info("Received gossip for request %s", request.id)
     if tuple(request.id) not in DELIVERED:
         r = Request(
@@ -201,6 +265,22 @@ async def gossip(request: GossipModel):
         DELIVERED.add(r.id)
         BUFFER.add(r)
         RB_deliver(r)
+        return {"msg": "Added to buffer"}
+    return {"msg": "Already delivered"}
+
+
+@app.post("/gossip-msg")
+async def gossip_msg(request: GossipMessageModel):
+    global MSG_BUFFER, MSG_DELIVERED
+    logger.info("Received gossip for message %s", request.m)
+    if tuple(request.m) not in MSG_DELIVERED:
+        msg = Message(
+            m=request.m,
+            q=request.q,
+        )
+        MSG_DELIVERED.add(msg.m)
+        MSG_BUFFER.add(msg)
+        RB_deliver_msg(msg)
         return {"msg": "Added to buffer"}
     return {"msg": "Already delivered"}
 
