@@ -1,20 +1,23 @@
+import json
 import os
 import random
 import asyncio
 import logging
 
-import requests
+# import requests
 
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
 
 from req import Request, Message
 from custom_logger import setup_logging
-from models import GossipMessageModel, InvokeRequestModel, GossipModel
-
+from redis_helpers import get_redis_client, BUFFER_QUEUE
+from models import InvokeRequestModel, GossipModel
 
 setup_logging()
 logger = logging.getLogger("myapp")
+
+r = get_redis_client()
 
 NODE_URLS = os.getenv("NODE_URLS", "0").split(",")
 NO_NODES = len(NODE_URLS)
@@ -60,9 +63,8 @@ def CAB_cast(m, q):
 
 
 def RB_cast(r):
-    global BUFFER
     logger.info("RB_cast called for request %s", r.id)
-    BUFFER.add(r)
+    add_to_buffer(r.to_json())
 
 
 def RB_deliver(r):
@@ -83,17 +85,8 @@ def RB_deliver(r):
 
 
 def RB_cast_message(msg):
-    global MSG_BUFFER
     logger.info("RB_cast_message called with msg %s", msg)
-    MSG_BUFFER.add(msg)
-
-
-def RB_deliver_msg(msg):
-    global MSG_RECEIVED, ORDERED_MESSAGES, UNORDERED_MESSAGES
-    logger.info("RB_deliver_msg called with msg %s", msg)
-    MSG_RECEIVED.add(msg.m)
-    if msg.m not in ORDERED_MESSAGES:
-        UNORDERED_MESSAGES.add(msg.m)
+    # contd...
 
 
 def get_predicate(q):
@@ -109,38 +102,21 @@ def test(msg_ids: set[int]):
     return True
 
 
-def send_gossip(node_index, json_data):
-    logger.info("Sending gossip to node %s", node_index)
-    retries = 2
-    url = f"{get_node_address(node_index)}/gossip"
-    for attempt in range(retries):
-        try:
-            logger.info(
-                "Attempt %s to send gossip to %s data %s", attempt + 1, url, json_data
-            )
-            resp = requests.post(url, json=json_data)
-            resp.raise_for_status()
-            return resp.json()
-        except Exception as e:
-            logger.info("Attempt %s failed: %s", attempt + 1, e)
-    logger.info("Failed to send to %s after %s attempts", url, retries)
-
-
-def send_message_gossip(node_index, json_data):
-    logger.info("Sending gossip to node %s", node_index)
-    retries = 2
-    url = f"{get_node_address(node_index)}/gossip-msg"
-    for attempt in range(retries):
-        try:
-            logger.info(
-                "Attempt %s to send gossip to %s data %s", attempt + 1, url, json_data
-            )
-            resp = requests.post(url, json=json_data)
-            resp.raise_for_status()
-            return resp.json()
-        except Exception as e:
-            logger.info("Attempt %s failed: %s", attempt + 1, e)
-    logger.info("Failed to send to %s after %s attempts", url, retries)
+# def send_gossip(node_index, json_data):
+#     logger.info("Sending gossip to node %s", node_index)
+#     retries = 2
+#     url = f"{get_node_address(node_index)}/gossip"
+#     for attempt in range(retries):
+#         try:
+#             logger.info(
+#                 "Attempt %s to send gossip to %s data %s", attempt + 1, url, json_data
+#             )
+#             resp = requests.post(url, json=json_data)
+#             resp.raise_for_status()
+#             return resp.json()
+#         except Exception as e:
+#             logger.info("Attempt %s failed: %s", attempt + 1, e)
+#     logger.info("Failed to send to %s after %s attempts", url, retries)
 
 
 def random_sample_excluding(n, k, exclude):
@@ -148,32 +124,27 @@ def random_sample_excluding(n, k, exclude):
     return random.sample(population, k)
 
 
-async def gossiping():
-    global BUFFER, MSG_BUFFER
-    K = 1
-    logger.info("Gossiping task started with K=%s", K)
-    while True:
-        if BUFFER:
-            logger.info("Gossiping data...")
-            k = random_sample_excluding(NO_NODES, K, node_id)
-            r = BUFFER.pop()
-            for i in k:
-                resp = send_gossip(i, r.to_json())
-                logger.info("Response %s", resp)
+# async def gossiping():
+#     global BUFFER, MSG_BUFFER
+#     K = 1
+#     logger.info("Gossiping task started with K=%s", K)
+#     while True:
+#         if BUFFER:
+#             logger.info("Gossiping data...")
+#             k = random_sample_excluding(NO_NODES, K, node_id)
+#             r = BUFFER.pop()
+#             for i in k:
+#                 resp = send_gossip(i, r.to_json())
+#                 logger.info("Response %s", resp)
 
-            DELIVERED.add(r.id)
+#             DELIVERED.add(r.id)
 
-        if MSG_BUFFER:
-            logger.info("Gossiping message data...")
-            k = random_sample_excluding(NO_NODES, K, node_id)
-            m = MSG_BUFFER.pop()
-            for i in k:
-                resp = send_message_gossip(i, m.to_json())
-                logger.info("Response %s", resp)
+#         await asyncio.sleep(0.001)
 
-            MSG_DELIVERED.add(m.m)
 
-        await asyncio.sleep(0.001)
+def add_to_buffer(msg):
+    logger.info("Adding message to buffer: %s", msg)
+    r.lpush(BUFFER_QUEUE, json.dumps(msg))
 
 
 async def rollback():
@@ -204,12 +175,9 @@ async def print_status():
         logger.info("EXECUTED: %s", [r.id for r in EXECUTED])
         logger.info("TO_BE_EXECUTED: %s", [r.id for r in TO_BE_EXECUTED])
         logger.info("TO_BE_ROLLEDBACK: %s", [r.id for r in TO_BE_ROLLEDBACK])
-        logger.info("BUFFER: %s", [r.id for r in BUFFER])
         logger.info("DELIVERED: %s", DELIVERED)
         logger.info("CAUSAL_CTX: %s", CAUSAL_CTX)
         logger.info("MISSING_CONTEXT_OPS: %s", [r.id for r in MISSING_CONTEXT_OPS])
-        logger.info("MSG_BUFFER: %s", [m.m for m in MSG_BUFFER])
-        logger.info("MSG_DELIVERED: %s", MSG_DELIVERED)
         logger.info("MSG_RECEIVED: %s", MSG_RECEIVED)
         logger.info("ORDERED_MESSAGES: %s", ORDERED_MESSAGES)
         logger.info("UNORDERED_MESSAGES: %s", UNORDERED_MESSAGES)
@@ -222,7 +190,6 @@ async def lifespan(app: FastAPI):
     tasks = [
         asyncio.create_task(rollback()),
         asyncio.create_task(execute()),
-        asyncio.create_task(gossiping()),
         asyncio.create_task(print_status()),
     ]
     yield
@@ -257,7 +224,7 @@ async def invoke(request: InvokeRequestModel):
 
 @app.post("/gossip")
 async def gossip(request: GossipModel):
-    global BUFFER, DELIVERED
+    global DELIVERED
     logger.info("Received gossip for request %s", request.id)
     if tuple(request.id) not in DELIVERED:
         r = Request(
@@ -268,24 +235,8 @@ async def gossip(request: GossipModel):
             causal_ctx=request.causal_ctx,
         )
         DELIVERED.add(r.id)
-        BUFFER.add(r)
+        add_to_buffer(r.to_json())
         RB_deliver(r)
-        return {"msg": "Added to buffer"}
-    return {"msg": "Already delivered"}
-
-
-@app.post("/gossip-msg")
-async def gossip_msg(request: GossipMessageModel):
-    global MSG_BUFFER, MSG_DELIVERED
-    logger.info("Received gossip for message %s", request.m)
-    if tuple(request.m) not in MSG_DELIVERED:
-        msg = Message(
-            m=request.m,
-            q=request.q,
-        )
-        MSG_DELIVERED.add(msg.m)
-        MSG_BUFFER.add(msg)
-        RB_deliver_msg(msg)
         return {"msg": "Added to buffer"}
     return {"msg": "Already delivered"}
 
