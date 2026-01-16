@@ -88,9 +88,7 @@ def send_gossip(node_index, json_data):
             return resp.json()
         except Exception as e:
             logger.info("Attempt %s failed: %s", attempt + 1, e)
-            # await asyncio.sleep(1 * (2**attempt))  # exponential backoff
     logger.info("Failed to send to %s after %s attempts", url, retries)
-    # return None
 
 
 def random_sample_excluding(n, k, exclude):
@@ -135,12 +133,28 @@ async def execute():
         await asyncio.sleep(0.001)  # Simulate execution delay
 
 
+async def print_status():
+    logger.info("Status task started")
+    while True:
+        logger.info("\n------------------Current status:--------------------")
+        logger.info("COMMITTED: %s", [r.id for r in COMMITTED])
+        logger.info("TENTATIVE: %s", [r.id for r in TENTATIVE])
+        logger.info("EXECUTED: %s", [r.id for r in EXECUTED])
+        logger.info("TO_BE_EXECUTED: %s", [r.id for r in TO_BE_EXECUTED])
+        logger.info("TO_BE_ROLLEDBACK: %s", [r.id for r in TO_BE_ROLLEDBACK])
+        logger.info("BUFFER: %s", [r.id for r in BUFFER])
+        logger.info("DELIVERED: %s", DELIVERED)
+        logger.info("CAUSAL_CTX: %s", CAUSAL_CTX)
+        await asyncio.sleep(10)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     tasks = [
         asyncio.create_task(rollback()),
         asyncio.create_task(execute()),
         asyncio.create_task(gossiping()),
+        asyncio.create_task(print_status()),
     ]
     yield
     for t in tasks:

@@ -13,10 +13,14 @@ class Request:
         self.causal_ctx = set(causal_ctx)
 
     def is_greater_than(self, other: "Request"):
-        return self.id > other.id
+        if self.ts == other.ts:
+            return self.id > other.id
+        return self.ts > other.ts
 
     def is_lesser_than(self, other: "Request"):
-        return self.id < other.id
+        if self.ts == other.ts:
+            return self.id < other.id
+        return self.ts < other.ts
 
     def to_json(self):
         json_data = {
