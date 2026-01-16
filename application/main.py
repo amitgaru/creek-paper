@@ -61,11 +61,14 @@ def CAB_cast(m, q):
 
 
 def RB_cast(r):
+    global BUFFER
     logger.info("RB_cast called for request %s", r.id)
     BUFFER.add(r)
 
 
 def RB_deliver(r):
+    global CAUSAL_CTX, MISSING_CONTEXT_OPS
+    logger.info("RB_deliver called for request %s", r.id)
     if r.id[0] == node_id:
         return
     if not r.strong_op or r.causal_ctx.issubset(CAUSAL_CTX):
@@ -81,11 +84,14 @@ def RB_deliver(r):
 
 
 def RB_cast_message(msg):
+    global MSG_BUFFER
     logger.info("RB_cast_message called with msg %s", msg)
     MSG_BUFFER.add(msg)
 
 
 def RB_deliver_msg(msg):
+    global MSG_RECEIVED, ORDERED_MESSAGES, UNORDERED_MESSAGES
+    logger.info("RB_deliver_msg called with msg %s", msg)
     MSG_RECEIVED.add(msg.m)
     if msg.m not in ORDERED_MESSAGES:
         UNORDERED_MESSAGES.add(msg.m)
