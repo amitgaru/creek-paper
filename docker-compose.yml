@@ -1,0 +1,25 @@
+services:
+
+  creek-node1:
+    build:
+      context: .
+    container_name: creek-node1
+    environment:
+      NODE_URLS: "creek-node1:8888,creek-node2:8888"
+      NODE_ID: 0
+    ports:
+      - "8001:8888"
+    command: [ "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8888" ]
+
+  creek-node2:
+    build:
+      context: .
+    container_name: creek-node2
+    environment:
+      NODE_URLS: "creek-node1:8888,creek-node2:8888"
+      NODE_ID: 1
+    ports:
+      - "8002:8888"
+    depends_on:
+      - creek-node1
+    command: [ "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8888" ]
