@@ -1,11 +1,16 @@
+import time
+
+from operation import Operation
+
+
 class Request:
 
-    def __init__(self, ts, id, op, strong_op, causal_ctx):
-        self.ts = ts
-        self.id = id
-        self.op = op
-        self.strong_op = strong_op
-        self.causal_ctx = causal_ctx
+    def __init__(self, id, op, strong_op, causal_ctx, ts=None):
+        self.ts = int(time.time()) if ts is None else ts
+        self.id = tuple(id)
+        self.op = Operation(*op)
+        self.strong_op = bool(strong_op)
+        self.causal_ctx = set(causal_ctx)
 
     def is_greater_than(self, other: "Request"):
         return self.id > other.id
@@ -16,7 +21,7 @@ class Request:
     def to_json(self):
         json_data = {
             "ts": self.ts,
-            "id": self.id,
+            "id": list(self.id),
             "op": [self.op.op_type, self.op.key, self.op.value],
             "strong_op": self.strong_op,
             "causal_ctx": list(self.causal_ctx),

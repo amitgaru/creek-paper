@@ -2,6 +2,7 @@ import os
 import time
 import random
 import asyncio
+import logging
 
 import requests
 
@@ -10,15 +11,19 @@ from contextlib import asynccontextmanager
 
 from req import Request
 from operation import Operation
+from custom_logger import setup_logging
 from models import InvokeRequestModel, GossipModel
 
 
-nodes = os.getenv("NODES", "0").split(",")
-NO_NODES = len(nodes)
+setup_logging()
+logger = logging.getLogger("myapp")
+
+NODE_URLS = os.getenv("NODE_URLS", "0").split(",")
+NO_NODES = len(NODE_URLS)
 node_id = int(os.getenv("NODE_ID", "0"))
 
-print("NO_NODES:", NO_NODES)
-print("NODE_ID:", node_id)
+logger.info("NO_NODES: %s", NO_NODES)
+logger.info("NODE_ID: %s", node_id)
 
 CURR_EVENT_NO = 0
 CAUSAL_CTX = set()
@@ -35,7 +40,7 @@ DELIVERED = set()
 
 
 def get_node_address(node_index):
-    return "http://localhost:9000/gossip"  # Placeholder for actual node address
+    return f"http://{NODE_URLS[node_index]}"  # Placeholder for actual node address
 
 
 def check_dep(id):
@@ -50,7 +55,7 @@ def CAB_cast(id, check_dep_fn):
 
 
 def RB_cast(r):
-    print("RB_cast called for request", r.id)
+    logger.info("RB_cast called for request %s", r.id)
     BUFFER.add(r)
 
 
@@ -70,53 +75,62 @@ def RB_deliver(r):
 
 
 def send_gossip(node_index, json_data):
-    print("Sending gossip to node", node_index)
+    logger.info("Sending gossip to node %s", node_index)
     retries = 2
-    url = f"{get_node_address(node_index)}"
+    url = f"{get_node_address(node_index)}/gossip"
     for attempt in range(retries):
         try:
-            print("Attempt", attempt + 1, "to send gossip to", url)
+            logger.info(
+                "Attempt %s to send gossip to %s data %s", attempt + 1, url, json_data
+            )
             resp = requests.post(url, json=json_data)
             resp.raise_for_status()
             return resp.json()
         except Exception as e:
-            print(f"Attempt {attempt+1} failed: {e}")
+            logger.info("Attempt %s failed: %s", attempt + 1, e)
             # await asyncio.sleep(1 * (2**attempt))  # exponential backoff
-    print(f"Failed to send to {url} after {retries} attempts")
+    logger.info("Failed to send to %s after %s attempts", url, retries)
     # return None
+
+
+def random_sample_excluding(n, k, exclude):
+    population = [i for i in range(n) if i != exclude]
+    return random.sample(population, k)
 
 
 async def gossiping():
     global BUFFER
     K = 1
-    print(f"Gossiping task started with K={K}")
+    logger.info("Gossiping task started with K=%s", K)
     while True:
         if BUFFER:
-            print("Gossiping data...")
-            k = random.sample(range(NO_NODES), K)
-            data = BUFFER.pop()
+            logger.info("Gossiping data...")
+            k = random_sample_excluding(NO_NODES, K, node_id)
+            r = BUFFER.pop()
             for i in k:
-                resp = send_gossip(i, data.to_json())
-                print("Response", resp)
+                resp = send_gossip(i, r.to_json())
+                logger.info("Response %s", resp)
+
+            DELIVERED.add(r.id)
 
         await asyncio.sleep(0.001)
 
 
 async def rollback():
-    print("Rollback task started")
+    logger.info("Rollback task started")
     while True:
         if TO_BE_ROLLEDBACK:
             r = TO_BE_ROLLEDBACK.pop(0)
-            print(f"Rolling back operation {r.id}")
+            logger.info("Rolling back operation %s", r.id)
         await asyncio.sleep(0.001)  # Simulate rollback delay
 
 
 async def execute():
-    print("Execute task started")
+    logger.info("Execute task started")
     while True:
         if not TO_BE_ROLLEDBACK and TO_BE_EXECUTED:
             r = TO_BE_EXECUTED.pop(0)
-            print(f"Executing operation {r.id}")
+            logger.info("Executing operation %s", r.id)
             EXECUTED.append(r)
         await asyncio.sleep(0.001)  # Simulate execution delay
 
@@ -143,11 +157,10 @@ async def invoke(request: InvokeRequestModel):
     global CURR_EVENT_NO, CAUSAL_CTX, REQUEST_AWAITING_RESP
     CURR_EVENT_NO += 1
     r = Request(
-        ts=time.time(),
         id=(node_id, CURR_EVENT_NO),
-        op=Operation(*request.op),
+        op=request.op,
         strong_op=request.strong_op,
-        causal_ctx=set(),
+        causal_ctx=[],
     )
     if r.strong_op:
         r.causal_ctx = CAUSAL_CTX - {x for x in TENTATIVE if r.is_lesser_than(x)}
@@ -162,12 +175,12 @@ async def invoke(request: InvokeRequestModel):
 @app.post("/gossip")
 async def gossip(request: GossipModel):
     global DELIVERED, BUFFER
-    print("Received gossip for request", request.id)
-    if request.id not in DELIVERED:
+    logger.info("Received gossip for request %s", request.id)
+    if tuple(request.id) not in DELIVERED:
         r = Request(
             ts=request.ts,
             id=request.id,
-            op=Operation(*request.op),
+            op=request.op,
             strong_op=request.strong_op,
             causal_ctx=request.causal_ctx,
         )

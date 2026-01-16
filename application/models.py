@@ -8,7 +8,7 @@ class InvokeRequestModel(BaseModel):
 
 class GossipModel(BaseModel):
     ts: int
-    id: int
+    id: list[int]
     op: list
     strong_op: bool
-    causal_ctx: set[int]
+    causal_ctx: list[int]
