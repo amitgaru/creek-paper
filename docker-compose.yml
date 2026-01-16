@@ -31,9 +31,9 @@ services:
     image: "redis:latest"
     container_name: redis2
     command: [ "redis-server", "--appendonly", "yes" ]
-  creek-node2:
-    build:
-      context: .
+
+  creek-node2: &creek-node2
+    <<: *creek-node1
     container_name: creek-node2
     environment:
       NODE_URLS: "creek-node1:8888,creek-node2:8888"
@@ -45,3 +45,11 @@ services:
       - creek-node1
       - redis2
     command: [ "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8888" ]
+
+  gossiping-2:
+    <<: *creek-node2
+    container_name: gossiping-2
+    ports: []
+    depends_on:
+      - creek-node2
+    command: [ "python", "gossiping.py" ]

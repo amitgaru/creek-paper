@@ -21,10 +21,10 @@ r = get_redis_client()
 
 NODE_URLS = os.getenv("NODE_URLS", "0").split(",")
 NO_NODES = len(NODE_URLS)
-node_id = int(os.getenv("NODE_ID", "0"))
+NODE_ID = int(os.getenv("NODE_ID", "0"))
 
 logger.info("NO_NODES: %s", NO_NODES)
-logger.info("NODE_ID: %s", node_id)
+logger.info("NODE_ID: %s", NODE_ID)
 
 CURR_EVENT_NO = 0
 CAUSAL_CTX = set()
@@ -46,10 +46,6 @@ ORDERED_MESSAGES = list()
 UNORDERED_MESSAGES = set()
 
 
-def get_node_address(node_index):
-    return f"http://{NODE_URLS[node_index]}"  # Placeholder for actual node address
-
-
 def predicate_check_dep(id):
     r = (COMMITTED + TENTATIVE).get(id, None)
     if r is None:
@@ -59,18 +55,19 @@ def predicate_check_dep(id):
 
 def CAB_cast(m, q):
     msg = Message(m, q)
-    RB_cast_message(msg)
+    # RB_cast_message(msg)
 
 
 def RB_cast(r):
     logger.info("RB_cast called for request %s", r.id)
     add_to_buffer(r.to_json())
+    DELIVERED.add(r.id)
 
 
 def RB_deliver(r):
     global CAUSAL_CTX, MISSING_CONTEXT_OPS
     logger.info("RB_deliver called for request %s", r.id)
-    if r.id[0] == node_id:
+    if r.id[0] == NODE_ID:
         return
     if not r.strong_op or r.causal_ctx.issubset(CAUSAL_CTX):
         CAUSAL_CTX.add(r.id)
@@ -84,11 +81,6 @@ def RB_deliver(r):
         MISSING_CONTEXT_OPS.add(r)
 
 
-def RB_cast_message(msg):
-    logger.info("RB_cast_message called with msg %s", msg)
-    # contd...
-
-
 def get_predicate(q):
     if q == "check_dep":
         return predicate_check_dep
@@ -100,46 +92,6 @@ def test(msg_ids: set[int]):
         if msg.m not in MSG_RECEIVED or get_predicate(msg.q)(msg.m):
             return False
     return True
-
-
-# def send_gossip(node_index, json_data):
-#     logger.info("Sending gossip to node %s", node_index)
-#     retries = 2
-#     url = f"{get_node_address(node_index)}/gossip"
-#     for attempt in range(retries):
-#         try:
-#             logger.info(
-#                 "Attempt %s to send gossip to %s data %s", attempt + 1, url, json_data
-#             )
-#             resp = requests.post(url, json=json_data)
-#             resp.raise_for_status()
-#             return resp.json()
-#         except Exception as e:
-#             logger.info("Attempt %s failed: %s", attempt + 1, e)
-#     logger.info("Failed to send to %s after %s attempts", url, retries)
-
-
-def random_sample_excluding(n, k, exclude):
-    population = [i for i in range(n) if i != exclude]
-    return random.sample(population, k)
-
-
-# async def gossiping():
-#     global BUFFER, MSG_BUFFER
-#     K = 1
-#     logger.info("Gossiping task started with K=%s", K)
-#     while True:
-#         if BUFFER:
-#             logger.info("Gossiping data...")
-#             k = random_sample_excluding(NO_NODES, K, node_id)
-#             r = BUFFER.pop()
-#             for i in k:
-#                 resp = send_gossip(i, r.to_json())
-#                 logger.info("Response %s", resp)
-
-#             DELIVERED.add(r.id)
-
-#         await asyncio.sleep(0.001)
 
 
 def add_to_buffer(msg):
@@ -207,7 +159,7 @@ async def invoke(request: InvokeRequestModel):
     global CURR_EVENT_NO, CAUSAL_CTX, REQUEST_AWAITING_RESP
     CURR_EVENT_NO += 1
     r = Request(
-        id=(node_id, CURR_EVENT_NO),
+        id=(NODE_ID, CURR_EVENT_NO),
         op=request.op,
         strong_op=request.strong_op,
         causal_ctx=[],
@@ -219,7 +171,7 @@ async def invoke(request: InvokeRequestModel):
     RB_cast(r)
     insert_into_tentative({r})
     REQUEST_AWAITING_RESP[r.id] = None
-    return {"event_no": CURR_EVENT_NO, "node_id": node_id}
+    return {"event_no": CURR_EVENT_NO, "node_id": NODE_ID}
 
 
 @app.post("/gossip")
@@ -234,8 +186,8 @@ async def gossip(request: GossipModel):
             strong_op=request.strong_op,
             causal_ctx=request.causal_ctx,
         )
-        DELIVERED.add(r.id)
         add_to_buffer(r.to_json())
+        DELIVERED.add(r.id)
         RB_deliver(r)
         return {"msg": "Added to buffer"}
     return {"msg": "Already delivered"}

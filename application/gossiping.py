@@ -21,6 +21,10 @@ NODE_ID = int(os.getenv("NODE_ID"))
 
 GOSSIP_FANOUT = 1
 
+logger.info("NO_NODES: %s", NO_NODES)
+logger.info("NODE_ID: %s", NODE_ID)
+logger.info("GOSSIPING_FANOUT: %s", GOSSIP_FANOUT)
+
 
 def random_sample_excluding(n, k, exclude):
     population = [i for i in range(n) if i != exclude]
