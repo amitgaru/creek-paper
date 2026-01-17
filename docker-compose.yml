@@ -44,7 +44,7 @@ services:
     depends_on:
       - creek-node1
       - redis2
-    command: [ "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8888" ]
+    # command: [ "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8888" ]
 
   gossiping-2:
     <<: *creek-node2
