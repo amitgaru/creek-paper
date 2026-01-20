@@ -234,6 +234,7 @@ async def apply_consensus_decisions():
             req_ids.sort()  # deterministic ordering
             ORDERED_MESSAGES.extend(req_ids)
             UNORDERED_MESSAGES = UNORDERED_MESSAGES - set(req_ids)
+            DELIVERED_CONSENSUS_DECISIONS.pop(DECIDING_CONSENSUS)
             DECIDING_CONSENSUS = DECIDING_CONSENSUS + 1
         await asyncio.sleep(0.001)
 
