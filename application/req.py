@@ -17,10 +17,14 @@ class Request:
             return self.id > other.id
         return self.ts > other.ts
 
+    __gt__ = is_greater_than
+
     def is_lesser_than(self, other: "Request"):
         if self.ts == other.ts:
             return self.id < other.id
         return self.ts < other.ts
+
+    __lt__ = is_lesser_than
 
     def to_json(self):
         json_data = {
@@ -31,6 +35,14 @@ class Request:
             "causal_ctx": list(self.causal_ctx),
         }
         return json_data
+
+    def __cmp__(self, other: "Request"):
+        if self.is_greater_than(other):
+            return 1
+        elif self.is_lesser_than(other):
+            return -1
+        else:
+            return 0
 
     def __str__(self):
         return f"Request(id={self.id}, op={self.op}, strong_op={self.strong_op}, causal_ctx={self.causal_ctx})"

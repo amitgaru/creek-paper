@@ -23,3 +23,9 @@ class ProposeCABModel(BaseModel):
     server: int
     unordered: list
     k: int
+
+
+class DecideCABModel(BaseModel):
+    server: int
+    decided: list
+    k: int

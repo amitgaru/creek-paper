@@ -8,10 +8,17 @@ from contextlib import asynccontextmanager
 
 from req import Request, Message
 from custom_logger import setup_logging
-from models import GossipCABModel, InvokeRequestModel, GossipModel, ProposeCABModel
+from models import (
+    DecideCABModel,
+    GossipCABModel,
+    InvokeRequestModel,
+    GossipModel,
+    ProposeCABModel,
+)
 from redis_helpers import (
     CAB_BUFFER_QUEUE,
-    CONSENSUS_QUEUE,
+    CONSENSUS_DECISION_QUEUE,
+    CONSENSUS_PROPOSAL_QUEUE,
     get_redis_client,
     BUFFER_QUEUE,
 )
@@ -47,14 +54,16 @@ ORDERED_MESSAGES = list()
 UNORDERED_MESSAGES = set()
 
 CONSENSUS_K = 0
-DELIVERED_CONSENSUS = {}
+DELIVERED_CONSENSUS_PROPOSALS = {}
+DELIVERED_CONSENSUS_DECISIONS = {}
+DECIDING_CONSENSUS = 1
 
 
-def predicate_check_dep(id):
-    r = (COMMITTED + TENTATIVE).get(id, None)
-    if r is None:
+def predicate_check_dep(req_id):
+    r = [req for req in COMMITTED + TENTATIVE if req.id == req_id]
+    if not r:
         return False
-    return r.causal_ctx.issubset(CAUSAL_CTX)
+    return r[0].causal_ctx.issubset(CAUSAL_CTX)
 
 
 def CAB_cast(m, q):
@@ -93,15 +102,9 @@ def RB_deliver_msg(msg):
         UNORDERED_MESSAGES.add(msg.m)
 
 
-def get_predicate(q):
-    if q == "check_dep":
-        return predicate_check_dep
-    return lambda x: False
-
-
-def test(msg_ids: set[int]):
+def predicate_test(msg_ids: set[int]):
     for msg in msg_ids:
-        if msg.m not in RECEIVED or get_predicate(msg.q)(msg.m):
+        if msg.m not in RECEIVED or not predicate_check_dep(msg.m):
             return False
     return True
 
@@ -116,9 +119,14 @@ def add_to_cab_buffer(msg: json):
     r.lpush(CAB_BUFFER_QUEUE, json.dumps(msg))
 
 
-def add_to_consensus_buffer(msg: json):
+def add_to_consensus_proposal_buffer(msg: json):
     logger.info("Adding message to buffer: %s", msg)
-    r.lpush(CONSENSUS_QUEUE, json.dumps(msg))
+    r.lpush(CONSENSUS_PROPOSAL_QUEUE, json.dumps(msg))
+
+
+def add_to_consensus_decision_buffer(msg: json):
+    logger.info("Adding message to buffer: %s", msg)
+    r.lpush(CONSENSUS_DECISION_QUEUE, json.dumps(msg))
 
 
 async def rollback():
@@ -141,21 +149,81 @@ async def execute():
 
 
 async def process_unordered_messages():
-    global UNORDERED_MESSAGES, CONSENSUS_K
-    logger.info("Processing unordered messages task started")
+    global UNORDERED_MESSAGES, CONSENSUS_K, DELIVERED_CONSENSUS_PROPOSALS
+    logger.info("Processing unordered messages task started.")
     while True:
-        if UNORDERED_MESSAGES:
+        if UNORDERED_MESSAGES and DECIDING_CONSENSUS != CONSENSUS_K:
             unordered_messages = UNORDERED_MESSAGES.copy()
             CONSENSUS_K = CONSENSUS_K + 1
-            add_to_consensus_buffer(
+            # add self to consesus list
+            DELIVERED_CONSENSUS_PROPOSALS[CONSENSUS_K] = [
+                {
+                    "k": CONSENSUS_K,
+                    "server": NODE_ID,
+                    "unordered": set(tuple(msg) for msg in unordered_messages),
+                }
+            ]
+            add_to_consensus_proposal_buffer(
                 {
                     "server": NODE_ID,
                     "unordered": [list(msg) for msg in unordered_messages],
                     "k": CONSENSUS_K,
                 }
             )
-            UNORDERED_MESSAGES = UNORDERED_MESSAGES - unordered_messages
         await asyncio.sleep(0.001)  # Simulate processing delay
+
+
+async def decide_consensus():
+    logger.info("Deciding consensus task started.")
+    global DECIDING_CONSENSUS, DELIVERED_CONSENSUS_PROPOSALS
+    while True:
+        if (
+            DECIDING_CONSENSUS in DELIVERED_CONSENSUS_PROPOSALS
+            and len(DELIVERED_CONSENSUS_PROPOSALS[DECIDING_CONSENSUS]) >= NO_NODES / 2
+        ):
+            proposals = [
+                p["unordered"]
+                for p in DELIVERED_CONSENSUS_PROPOSALS[DECIDING_CONSENSUS]
+            ]
+            decided = set.intersection(*proposals)
+            # check for predicate
+            decided = [d for d in decided if predicate_test(d)]
+            if decided:
+                DELIVERED_CONSENSUS_DECISIONS[DECIDING_CONSENSUS] = [
+                    {
+                        "server": NODE_ID,
+                        "decided": set(tuple(msg) for msg in decided),
+                        "k": DECIDING_CONSENSUS,
+                    }
+                ]
+                # send the decision
+                add_to_consensus_decision_buffer(
+                    {
+                        "server": NODE_ID,
+                        "decided": [list(d) for d in decided],
+                        "k": DECIDING_CONSENSUS,
+                    }
+                )
+        await asyncio.sleep(0.001)
+
+
+async def apply_consensus_decisions():
+    logger.info("Applying consensus decisions task started.")
+    global UNORDERED_MESSAGES, DELIVERED_CONSENSUS_DECISIONS, DECIDING_CONSENSUS, ORDERED_MESSAGES
+    while True:
+        if (
+            DECIDING_CONSENSUS in DELIVERED_CONSENSUS_DECISIONS
+            and len(DELIVERED_CONSENSUS_DECISIONS[DECIDING_CONSENSUS]) >= NO_NODES / 2
+        ):
+            decisions = [
+                d["decided"] for d in DELIVERED_CONSENSUS_DECISIONS[DECIDING_CONSENSUS]
+            ]
+            req_ids = list(set.intersection(*decisions))
+            req_ids.sort()  # deterministic ordering
+            ORDERED_MESSAGES.extend(req_ids)
+            UNORDERED_MESSAGES = UNORDERED_MESSAGES - set(req_ids)
+            DECIDING_CONSENSUS += 1
+        await asyncio.sleep(0.001)
 
 
 async def print_status():
@@ -173,7 +241,10 @@ async def print_status():
         logger.info("MSG_RECEIVED: %s", RECEIVED)
         logger.info("ORDERED_MESSAGES: %s", ORDERED_MESSAGES)
         logger.info("UNORDERED_MESSAGES: %s", UNORDERED_MESSAGES)
-        logger.info("DELIVERED_CONSENSUS: %s", DELIVERED_CONSENSUS)
+        logger.info("DELIVERED_CONSENSUS_PROPOSALS: %s", DELIVERED_CONSENSUS_PROPOSALS)
+        logger.info("DELIVERED_CONSENSUS_DECISIONS: %s", DELIVERED_CONSENSUS_DECISIONS)
+        logger.info("CONSENSUS_K: %s", CONSENSUS_K)
+        logger.info("DECIDING_CONSENSUS: %s", DECIDING_CONSENSUS)
         logger.info("\n------------------------End--------------------------\n")
         await asyncio.sleep(10)
 
@@ -184,6 +255,8 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(rollback()),
         asyncio.create_task(execute()),
         asyncio.create_task(process_unordered_messages()),
+        asyncio.create_task(decide_consensus()),
+        asyncio.create_task(apply_consensus_decisions()),
         asyncio.create_task(print_status()),
     ]
     yield
@@ -253,29 +326,59 @@ async def gossip_cab(request: GossipCABModel):
 
 @app.post("/propose-cab")
 async def propose_cab(request: ProposeCABModel):
-    global DELIVERED_CONSENSUS
+    global DELIVERED_CONSENSUS_PROPOSALS
     logger.info(
         "Received proposal message with params. Server: %s, Unordered: %s, k: %s",
         request.server,
         request.unordered,
         request.k,
     )
-    if request.k in DELIVERED_CONSENSUS:
-        if DELIVERED_CONSENSUS[request.k]["server"] == request.server:
+    k = request.k
+    server = request.server
+    unordered = set(tuple(u) for u in request.unordered)
+    if request.k in DELIVERED_CONSENSUS_PROPOSALS:
+        if [
+            i for i in DELIVERED_CONSENSUS_PROPOSALS[request.k] if i["server"] == server
+        ]:
             logger.info("Proposal with k: %s already delivered", request.k)
             return {"msg": "Already delivered"}
         else:
-            DELIVERED_CONSENSUS[request.k] = {
-                "k": request.k,
-                "server": request.server,
-                "unordered": request.unordered,
-            }
+            DELIVERED_CONSENSUS_PROPOSALS[request.k].append(
+                {"k": k, "server": server, "unordered": unordered}
+            )
     else:
-        DELIVERED_CONSENSUS[request.k] = {
-            "k": request.k,
-            "server": request.server,
-            "unordered": request.unordered,
-        }
+        DELIVERED_CONSENSUS_PROPOSALS[request.k] = [
+            {"k": k, "server": server, "unordered": unordered}
+        ]
+    return {"msg": "Received"}
+
+
+@app.post("/decide-cab")
+async def decide_cab(request: DecideCABModel):
+    global DELIVERED_CONSENSUS_DECISIONS
+    logger.info(
+        "Received decision message with params. Server: %s, Decided: %s, k: %s",
+        request.server,
+        request.decided,
+        request.k,
+    )
+    k = request.k
+    server = request.server
+    decided = set(tuple(d) for d in request.decided)
+    if request.k in DELIVERED_CONSENSUS_DECISIONS:
+        if [
+            i for i in DELIVERED_CONSENSUS_DECISIONS[request.k] if i["server"] == server
+        ]:
+            logger.info("Decision with k: %s already delivered", request.k)
+            return {"msg": "Already delivered"}
+        else:
+            DELIVERED_CONSENSUS_DECISIONS[request.k].append(
+                {"k": k, "server": server, "decided": decided}
+            )
+    else:
+        DELIVERED_CONSENSUS_DECISIONS[request.k] = [
+            {"k": k, "server": server, "decided": decided}
+        ]
     return {"msg": "Received"}
 
 
