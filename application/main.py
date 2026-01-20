@@ -182,7 +182,7 @@ async def decide_consensus():
     while True:
         if DECIDING_CONSENSUS in DELIVERED_CONSENSUS_PROPOSALS and len(
             DELIVERED_CONSENSUS_PROPOSALS[DECIDING_CONSENSUS]
-        ) >= (NO_NODES / 2):
+        ) >= ((NO_NODES / 2) + 1):
             logger.info("Deciding consensus for k: %s", DECIDING_CONSENSUS)
             proposals = [
                 p["unordered"]
@@ -223,7 +223,7 @@ async def apply_consensus_decisions():
     while True:
         if DECIDING_CONSENSUS in DELIVERED_CONSENSUS_DECISIONS and len(
             DELIVERED_CONSENSUS_DECISIONS[DECIDING_CONSENSUS]
-        ) >= (NO_NODES / 2):
+        ) >= ((NO_NODES / 2) + 1):
             logger.info("Applying consensus decision for k: %s", DECIDING_CONSENSUS)
             decisions = [
                 d["decided"] for d in DELIVERED_CONSENSUS_DECISIONS[DECIDING_CONSENSUS]
