@@ -56,7 +56,8 @@ UNORDERED_MESSAGES = set()
 CONSENSUS_K = 0
 DELIVERED_CONSENSUS_PROPOSALS = {}
 DELIVERED_CONSENSUS_DECISIONS = {}
-DECIDING_CONSENSUS = 1
+DECIDING_CONSENSUS = False
+APPLYING_CONSENSUS = False
 
 
 def predicate_check_dep(req_id):
@@ -149,10 +150,10 @@ async def execute():
 
 
 async def process_unordered_messages():
-    global UNORDERED_MESSAGES, CONSENSUS_K, DELIVERED_CONSENSUS_PROPOSALS
+    global UNORDERED_MESSAGES, CONSENSUS_K, DELIVERED_CONSENSUS_PROPOSALS, DECIDING_CONSENSUS
     logger.info("Processing unordered messages task started.")
     while True:
-        if UNORDERED_MESSAGES and DECIDING_CONSENSUS != CONSENSUS_K:
+        if UNORDERED_MESSAGES and not DECIDING_CONSENSUS:
             logger.info(
                 "Processing unordered messages for consensus k: %s", CONSENSUS_K
             )
@@ -173,30 +174,32 @@ async def process_unordered_messages():
                     "k": CONSENSUS_K,
                 }
             )
+            DECIDING_CONSENSUS = True
         await asyncio.sleep(0.001)  # Simulate processing delay
 
 
 async def decide_consensus():
     logger.info("Deciding consensus task started.")
-    global DECIDING_CONSENSUS, DELIVERED_CONSENSUS_PROPOSALS
+    global DECIDING_CONSENSUS, DELIVERED_CONSENSUS_PROPOSALS, APPLYING_CONSENSUS
     while True:
-        if DECIDING_CONSENSUS in DELIVERED_CONSENSUS_PROPOSALS and len(
-            DELIVERED_CONSENSUS_PROPOSALS[DECIDING_CONSENSUS]
-        ) >= (NO_NODES / 2):
-            logger.info("Deciding consensus for k: %s", DECIDING_CONSENSUS)
+        if (
+            DECIDING_CONSENSUS
+            and not APPLYING_CONSENSUS
+            and len(DELIVERED_CONSENSUS_PROPOSALS[CONSENSUS_K]) >= (NO_NODES / 2)
+        ):
+            logger.info("Deciding consensus for k: %s", CONSENSUS_K)
             proposals = [
-                p["unordered"]
-                for p in DELIVERED_CONSENSUS_PROPOSALS[DECIDING_CONSENSUS]
+                p["unordered"] for p in DELIVERED_CONSENSUS_PROPOSALS[CONSENSUS_K]
             ]
             decided = set.intersection(*proposals)
             # check for predicate
             decided = [d for d in decided if predicate_test(d)]
             if decided:
-                DELIVERED_CONSENSUS_DECISIONS[DECIDING_CONSENSUS] = [
+                DELIVERED_CONSENSUS_DECISIONS[CONSENSUS_K] = [
                     {
                         "server": NODE_ID,
                         "decided": set(tuple(msg) for msg in decided),
-                        "k": DECIDING_CONSENSUS,
+                        "k": CONSENSUS_K,
                     }
                 ]
                 # send the decision
@@ -204,38 +207,37 @@ async def decide_consensus():
                     {
                         "server": NODE_ID,
                         "decided": [list(d) for d in decided],
-                        "k": DECIDING_CONSENSUS,
+                        "k": CONSENSUS_K,
                     }
                 )
-                DELIVERED_CONSENSUS_PROPOSALS.pop(DECIDING_CONSENSUS)
+                APPLYING_CONSENSUS = True
             else:
                 logger.info(
                     "No messages satisfied the predicate for consensus k: %s",
-                    DECIDING_CONSENSUS,
+                    CONSENSUS_K,
                 )
-                # DELIVERED_CONSENSUS_PROPOSALS.pop(DECIDING_CONSENSUS)
-                DECIDING_CONSENSUS = DECIDING_CONSENSUS + 1
+                DECIDING_CONSENSUS = False
 
         await asyncio.sleep(0.001)
 
 
 async def apply_consensus_decisions():
     logger.info("Applying consensus decisions task started.")
-    global UNORDERED_MESSAGES, DELIVERED_CONSENSUS_DECISIONS, DECIDING_CONSENSUS, ORDERED_MESSAGES
+    global UNORDERED_MESSAGES, DELIVERED_CONSENSUS_DECISIONS, DECIDING_CONSENSUS, ORDERED_MESSAGES, APPLYING_CONSENSUS
     while True:
-        if DECIDING_CONSENSUS in DELIVERED_CONSENSUS_DECISIONS and len(
-            DELIVERED_CONSENSUS_DECISIONS[DECIDING_CONSENSUS]
-        ) >= (NO_NODES / 2):
-            logger.info("Applying consensus decision for k: %s", DECIDING_CONSENSUS)
+        if DECIDING_CONSENSUS and len(DELIVERED_CONSENSUS_DECISIONS[CONSENSUS_K]) >= (
+            NO_NODES / 2
+        ):
+            logger.info("Applying consensus decision for k: %s", CONSENSUS_K)
             decisions = [
-                d["decided"] for d in DELIVERED_CONSENSUS_DECISIONS[DECIDING_CONSENSUS]
+                d["decided"] for d in DELIVERED_CONSENSUS_DECISIONS[CONSENSUS_K]
             ]
             req_ids = list(set.intersection(*decisions))
             req_ids.sort()  # deterministic ordering
             ORDERED_MESSAGES.extend(req_ids)
             UNORDERED_MESSAGES = UNORDERED_MESSAGES - set(req_ids)
-            DELIVERED_CONSENSUS_DECISIONS.pop(DECIDING_CONSENSUS)
-            DECIDING_CONSENSUS = DECIDING_CONSENSUS + 1
+            DECIDING_CONSENSUS = False
+            APPLYING_CONSENSUS = False
         await asyncio.sleep(0.001)
 
 
@@ -258,6 +260,7 @@ async def print_status():
         logger.info("DELIVERED_CONSENSUS_DECISIONS: %s", DELIVERED_CONSENSUS_DECISIONS)
         logger.info("CONSENSUS_K: %s", CONSENSUS_K)
         logger.info("DECIDING_CONSENSUS: %s", DECIDING_CONSENSUS)
+        logger.info("APPLYING_CONSENSUS: %s", APPLYING_CONSENSUS)
         logger.info("\n------------------------End--------------------------\n")
         await asyncio.sleep(10)
 
