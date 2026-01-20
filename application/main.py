@@ -150,8 +150,8 @@ async def execute():
 
 
 async def process_unordered_messages():
-    global UNORDERED_MESSAGES, CONSENSUS_K, DELIVERED_CONSENSUS_PROPOSALS, DECIDING_CONSENSUS
     logger.info("Processing unordered messages task started.")
+    global UNORDERED_MESSAGES, CONSENSUS_K, DELIVERED_CONSENSUS_PROPOSALS, DECIDING_CONSENSUS
     while True:
         if UNORDERED_MESSAGES and not DECIDING_CONSENSUS:
             logger.info(
@@ -235,7 +235,9 @@ async def apply_consensus_decisions():
             req_ids = list(set.intersection(*decisions))
             req_ids.sort()  # deterministic ordering
             ORDERED_MESSAGES.extend(req_ids)
-            UNORDERED_MESSAGES = UNORDERED_MESSAGES - set(req_ids)
+            for req_id in req_ids:
+                if req_id in UNORDERED_MESSAGES:
+                    UNORDERED_MESSAGES.remove(req_id)
             DECIDING_CONSENSUS = False
             APPLYING_CONSENSUS = False
         await asyncio.sleep(0.001)
