@@ -212,7 +212,7 @@ async def decide_consensus():
                     "No messages satisfied the predicate for consensus k: %s",
                     DECIDING_CONSENSUS,
                 )
-                DECIDING_CONSENSUS += 1
+                DECIDING_CONSENSUS = DECIDING_CONSENSUS + 1
 
         await asyncio.sleep(0.001)
 
