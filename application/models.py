@@ -14,6 +14,12 @@ class GossipModel(BaseModel):
     causal_ctx: list[int]
 
 
-class GossipMessageModel(BaseModel):
+class GossipCABModel(BaseModel):
     m: list[int]
     q: str
+
+
+class ProposeCABModel(BaseModel):
+    server: int
+    unordered: list
+    k: int

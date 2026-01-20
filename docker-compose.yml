@@ -27,6 +27,14 @@ services:
       - creek-node1
     command: [ "python", "gossiping.py" ]
 
+  consensus-1:
+    <<: *creek-node1
+    container_name: consensus-1
+    ports: []
+    depends_on:
+      - creek-node1
+    command: [ "python", "consensus.py" ]
+
   redis2:
     image: "redis:latest"
     container_name: redis2
@@ -53,3 +61,11 @@ services:
     depends_on:
       - creek-node2
     command: [ "python", "gossiping.py" ]
+
+  consensus-2:
+    <<: *creek-node2
+    container_name: consensus-2
+    ports: []
+    depends_on:
+      - creek-node2
+    command: [ "python", "consensus.py" ]

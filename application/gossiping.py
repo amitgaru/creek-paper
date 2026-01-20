@@ -1,11 +1,10 @@
-import os
 import json
-import random
 import logging
 
 import requests
 
-from redis_helpers import get_redis_client, BUFFER_QUEUE
+from redis_helpers import get_redis_client, BUFFER_QUEUE, CAB_BUFFER_QUEUE
+from server_helpers import get_node_address, NODE_ID, random_sample_excluding
 
 
 logging.basicConfig(
@@ -15,30 +14,16 @@ logging.basicConfig(
 
 logger = logging.getLogger()
 
-NODE_URLS = os.getenv("NODE_URLS", "0").split(",")
-NO_NODES = len(NODE_URLS)
-NODE_ID = int(os.getenv("NODE_ID"))
 
 GOSSIP_FANOUT = 1
 
-logger.info("NO_NODES: %s", NO_NODES)
-logger.info("NODE_ID: %s", NODE_ID)
 logger.info("GOSSIPING_FANOUT: %s", GOSSIP_FANOUT)
 
 
-def random_sample_excluding(n, k, exclude):
-    population = [i for i in range(n) if i != exclude]
-    return random.sample(population, k)
-
-
-def get_node_address(node_index):
-    return f"http://{NODE_URLS[node_index]}"  # Placeholder for actual node address
-
-
-def send_gossip(node_index, json_data):
+def send_gossip(node_index, json_data, path="/gossip"):
     logger.info("Sending gossip to node %s", node_index)
     retries = 2
-    url = f"{get_node_address(node_index)}/gossip"
+    url = f"{get_node_address(node_index)}{path}"
     for attempt in range(retries):
         try:
             logger.info(
@@ -58,13 +43,23 @@ def main():
     while True:
         item = r.rpop(BUFFER_QUEUE)
         if item:
-            k = random_sample_excluding(NO_NODES, GOSSIP_FANOUT, NODE_ID)
+            k = random_sample_excluding(GOSSIP_FANOUT, NODE_ID)
             item = json.loads(item)
             for indx in k:
-                resp = send_gossip(indx, item)
+                resp = send_gossip(indx, item, path="/gossip")
                 logger.info("Response %s", resp)
             logger.info("Dequeued: %s", item)
+
+        item = r.rpop(CAB_BUFFER_QUEUE)
+        if item:
+            k = random_sample_excluding(GOSSIP_FANOUT, NODE_ID)
+            item = json.loads(item)
+            for indx in k:
+                resp = send_gossip(indx, item, path="/gossip-cab")
+                logger.info("Response %s", resp)
+            logger.info("Dequeued CAB: %s", item)
 
 
 if __name__ == "__main__":
     main()
+ 

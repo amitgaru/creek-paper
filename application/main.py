@@ -1,18 +1,20 @@
-import json
 import os
-import random
+import json
 import asyncio
 import logging
-
-# import requests
 
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
 
 from req import Request, Message
 from custom_logger import setup_logging
-from redis_helpers import get_redis_client, BUFFER_QUEUE
-from models import InvokeRequestModel, GossipModel
+from models import GossipCABModel, InvokeRequestModel, GossipModel, ProposeCABModel
+from redis_helpers import (
+    CAB_BUFFER_QUEUE,
+    CONSENSUS_QUEUE,
+    get_redis_client,
+    BUFFER_QUEUE,
+)
 
 setup_logging()
 logger = logging.getLogger("myapp")
@@ -38,12 +40,14 @@ MISSING_CONTEXT_OPS = set()
 
 BUFFER = set()
 DELIVERED = set()
+DELIVERED_CAB = set()
 
-MSG_BUFFER = set()
-MSG_DELIVERED = set()
-MSG_RECEIVED = set()
+RECEIVED = set()
 ORDERED_MESSAGES = list()
 UNORDERED_MESSAGES = set()
+
+CONSENSUS_K = 0
+DELIVERED_CONSENSUS = {}
 
 
 def predicate_check_dep(id):
@@ -54,8 +58,9 @@ def predicate_check_dep(id):
 
 
 def CAB_cast(m, q):
+    logger.info("CAB_cast called for message %s", m)
     msg = Message(m, q)
-    # RB_cast_message(msg)
+    add_to_cab_buffer(msg.to_json())
 
 
 def RB_cast(r):
@@ -81,6 +86,13 @@ def RB_deliver(r):
         MISSING_CONTEXT_OPS.add(r)
 
 
+def RB_deliver_msg(msg):
+    global ORDERED_MESSAGES, UNORDERED_MESSAGES
+    RECEIVED.add(msg.m)
+    if msg.m not in ORDERED_MESSAGES:
+        UNORDERED_MESSAGES.add(msg.m)
+
+
 def get_predicate(q):
     if q == "check_dep":
         return predicate_check_dep
@@ -89,14 +101,24 @@ def get_predicate(q):
 
 def test(msg_ids: set[int]):
     for msg in msg_ids:
-        if msg.m not in MSG_RECEIVED or get_predicate(msg.q)(msg.m):
+        if msg.m not in RECEIVED or get_predicate(msg.q)(msg.m):
             return False
     return True
 
 
-def add_to_buffer(msg):
+def add_to_buffer(msg: json):
     logger.info("Adding message to buffer: %s", msg)
     r.lpush(BUFFER_QUEUE, json.dumps(msg))
+
+
+def add_to_cab_buffer(msg: json):
+    logger.info("Adding message to buffer: %s", msg)
+    r.lpush(CAB_BUFFER_QUEUE, json.dumps(msg))
+
+
+def add_to_consensus_buffer(msg: json):
+    logger.info("Adding message to buffer: %s", msg)
+    r.lpush(CONSENSUS_QUEUE, json.dumps(msg))
 
 
 async def rollback():
@@ -118,6 +140,24 @@ async def execute():
         await asyncio.sleep(0.001)  # Simulate execution delay
 
 
+async def process_unordered_messages():
+    global UNORDERED_MESSAGES, CONSENSUS_K
+    logger.info("Processing unordered messages task started")
+    while True:
+        if UNORDERED_MESSAGES:
+            unordered_messages = UNORDERED_MESSAGES.copy()
+            CONSENSUS_K = CONSENSUS_K + 1
+            add_to_consensus_buffer(
+                {
+                    "server": NODE_ID,
+                    "unordered": [list(msg) for msg in unordered_messages],
+                    "k": CONSENSUS_K,
+                }
+            )
+            UNORDERED_MESSAGES = UNORDERED_MESSAGES - unordered_messages
+        await asyncio.sleep(0.001)  # Simulate processing delay
+
+
 async def print_status():
     logger.info("Status task started")
     while True:
@@ -130,9 +170,10 @@ async def print_status():
         logger.info("DELIVERED: %s", DELIVERED)
         logger.info("CAUSAL_CTX: %s", CAUSAL_CTX)
         logger.info("MISSING_CONTEXT_OPS: %s", [r.id for r in MISSING_CONTEXT_OPS])
-        logger.info("MSG_RECEIVED: %s", MSG_RECEIVED)
+        logger.info("MSG_RECEIVED: %s", RECEIVED)
         logger.info("ORDERED_MESSAGES: %s", ORDERED_MESSAGES)
         logger.info("UNORDERED_MESSAGES: %s", UNORDERED_MESSAGES)
+        logger.info("DELIVERED_CONSENSUS: %s", DELIVERED_CONSENSUS)
         logger.info("\n------------------------End--------------------------\n")
         await asyncio.sleep(10)
 
@@ -142,6 +183,7 @@ async def lifespan(app: FastAPI):
     tasks = [
         asyncio.create_task(rollback()),
         asyncio.create_task(execute()),
+        asyncio.create_task(process_unordered_messages()),
         asyncio.create_task(print_status()),
     ]
     yield
@@ -191,6 +233,50 @@ async def gossip(request: GossipModel):
         RB_deliver(r)
         return {"msg": "Added to buffer"}
     return {"msg": "Already delivered"}
+
+
+@app.post("/gossip-cab")
+async def gossip_cab(request: GossipCABModel):
+    global DELIVERED_CAB
+    logger.info("Received gossip message for request %s", request.m)
+    if tuple(request.m) not in DELIVERED_CAB:
+        msg = Message(
+            m=request.m,
+            q=request.q,
+        )
+        add_to_cab_buffer(msg.to_json())
+        DELIVERED_CAB.add(msg.m)
+        RB_deliver_msg(msg)
+        return {"msg": "Added to buffer"}
+    return {"msg": "Already delivered"}
+
+
+@app.post("/propose-cab")
+async def propose_cab(request: ProposeCABModel):
+    global DELIVERED_CONSENSUS
+    logger.info(
+        "Received proposal message with params. Server: %s, Unordered: %s, k: %s",
+        request.server,
+        request.unordered,
+        request.k,
+    )
+    if request.k in DELIVERED_CONSENSUS:
+        if DELIVERED_CONSENSUS[request.k]["server"] == request.server:
+            logger.info("Proposal with k: %s already delivered", request.k)
+            return {"msg": "Already delivered"}
+        else:
+            DELIVERED_CONSENSUS[request.k] = {
+                "k": request.k,
+                "server": request.server,
+                "unordered": request.unordered,
+            }
+    else:
+        DELIVERED_CONSENSUS[request.k] = {
+            "k": request.k,
+            "server": request.server,
+            "unordered": request.unordered,
+        }
+    return {"msg": "Received"}
 
 
 def insert_into_tentative(ready_to_schedule_ops):
