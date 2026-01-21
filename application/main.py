@@ -278,6 +278,7 @@ async def apply_consensus_decisions():
 
 def commit(r: Request):
     global TENTATIVE, COMMITTED
+    logger.info("Committing request %s", r.id)
     committed_ext = [x for x in TENTATIVE if x.is_subset_of(r.causal_ctx)]
     new_tentative = [x for x in TENTATIVE if x not in committed_ext and x != r]
     COMMITTED.extend(committed_ext + [r])
@@ -292,7 +293,7 @@ def commit(r: Request):
 def CAB_deliver(req_id):
     global TENTATIVE
     logger.info("CAB_deliver called for message %s", req_id)
-    req = [r for r in TENTATIVE if r.id == req_id]
+    req = [x for x in TENTATIVE if x.id == req_id]
     if not req:
         return
     r = req[0]
