@@ -279,7 +279,7 @@ async def apply_consensus_decisions():
 def commit(r: Request):
     global TENTATIVE, COMMITTED
     logger.info("Committing request %s", r.id)
-    committed_ext = [x for x in TENTATIVE if x.is_subset_of(r.causal_ctx)]
+    committed_ext = [x for x in TENTATIVE if x.id in r.causal_ctx]
     new_tentative = [x for x in TENTATIVE if x not in committed_ext and x != r]
     COMMITTED.extend(committed_ext + [r])
     TENTATIVE = new_tentative
@@ -485,8 +485,8 @@ def insert_into_tentative(ready_to_schedule_ops):
     adjust_execution(new_order)
 
 
-def adjust_execution(new_order):
-    global EXECUTED, TO_BE_EXECUTED, TO_BE_ROLLEDBACK
+def adjust_execution(new_order: list[Request]):
+    global COMMITTED, EXECUTED, TO_BE_EXECUTED, TO_BE_ROLLEDBACK
     in_order = longest_common_prefix(COMMITTED, new_order)
     out_of_order = [x for x in EXECUTED if x not in in_order]
     EXECUTED = in_order
@@ -494,7 +494,7 @@ def adjust_execution(new_order):
     TO_BE_ROLLEDBACK = out_of_order[::-1]
 
 
-def longest_common_prefix(list1, list2):
+def longest_common_prefix(list1: list[Request], list2: list[Request]) -> list[Request]:
     common_prefix = []
     for a, b in zip(list1, list2):
         if a == b:
