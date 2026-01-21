@@ -348,7 +348,7 @@ app = FastAPI(lifespan=lifespan)
 
 @app.post("/invoke")
 async def invoke(request: InvokeRequestModel):
-    global CURR_EVENT_NO, CAUSAL_CTX, REQUEST_AWAITING_RESP
+    global CURR_EVENT_NO, CAUSAL_CTX, REQUEST_AWAITING_RESP, TENTATIVE
     CURR_EVENT_NO += 1
     r = Request(
         id=(NODE_ID, CURR_EVENT_NO),
@@ -357,7 +357,7 @@ async def invoke(request: InvokeRequestModel):
         causal_ctx=[],
     )
     if r.strong_op:
-        r.causal_ctx = CAUSAL_CTX - {x for x in TENTATIVE if r.is_lesser_than(x)}
+        r.causal_ctx = CAUSAL_CTX - {x for x in TENTATIVE if r < x}
         CAB_cast(r.id, "check_dep")
     CAUSAL_CTX.add(r.id)
     RB_cast(r)
