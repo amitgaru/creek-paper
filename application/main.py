@@ -253,10 +253,10 @@ async def apply_consensus_decisions():
             ]
             req_ids = list(set.intersection(*decisions))
             req_ids.sort()  # deterministic ordering
-            ORDERED_MESSAGES.extend(req_ids)
             for req_id in req_ids:
                 if req_id in UNORDERED_MESSAGES:
                     UNORDERED_MESSAGES.remove(req_id)
+                    ORDERED_MESSAGES.append(req_id)
             DECIDING_CONSENSUS = False
             APPLYING_CONSENSUS = False
         await asyncio.sleep(0.001)
@@ -277,7 +277,6 @@ def commit(r: Request):
 
 def CAB_deliver(req_id):
     global TENTATIVE
-
     logger.info("CAB_deliver called for message %s", req_id)
     req = [r for r in TENTATIVE if r.id == req_id]
     if not req:
@@ -288,7 +287,7 @@ def CAB_deliver(req_id):
 
 async def process_ordered_messages():
     logger.info("Processing ordered messages task started.")
-    global ORDERED_MESSAGES, UNORDERED_MESSAGES, RECEIVED
+    global ORDERED_MESSAGES, RECEIVED
     while True:
         if (
             ORDERED_MESSAGES
