@@ -68,6 +68,12 @@ def predicate_check_dep(req_id):
     r = [req for req in COMMITTED + TENTATIVE if req.id == req_id]
     if not r:
         return False
+    logger.info(
+        "Checking predicate for request %s with causal context %s, causal context %s",
+        req_id,
+        r[0].causal_ctx,
+        CAUSAL_CTX,
+    )
     return r[0].causal_ctx.issubset(CAUSAL_CTX)
 
 
@@ -357,7 +363,7 @@ async def invoke(request: InvokeRequestModel):
         causal_ctx=[],
     )
     if r.strong_op:
-        r.causal_ctx = CAUSAL_CTX - {x for x in TENTATIVE if r < x}
+        r.causal_ctx = CAUSAL_CTX - {x.id for x in TENTATIVE if r < x}
         CAB_cast(r.id, "check_dep")
     CAUSAL_CTX.add(r.id)
     RB_cast(r)

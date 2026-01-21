@@ -52,7 +52,7 @@ def main():
 
         item = r.rpop(CAB_BUFFER_QUEUE)
         if item:
-            k = random_sample_excluding(GOSSIP_FANOUT, NODE_ID)
+            k = random_sample_excluding(GOSSIP_FANOUT, None)
             item = json.loads(item)
             for indx in k:
                 resp = send_gossip(indx, item, path="/gossip-cab")
@@ -62,4 +62,3 @@ def main():
 
 if __name__ == "__main__":
     main()
- 
