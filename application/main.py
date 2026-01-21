@@ -61,6 +61,7 @@ APPLYING_CONSENSUS = False
 
 
 def predicate_check_dep(req_id):
+    global COMMITTED, TENTATIVE, CAUSAL_CTX
     r = [req for req in COMMITTED + TENTATIVE if req.id == req_id]
     if not r:
         return False
@@ -97,7 +98,8 @@ def RB_deliver(r):
 
 
 def RB_deliver_msg(msg):
-    global ORDERED_MESSAGES, UNORDERED_MESSAGES
+    global ORDERED_MESSAGES, UNORDERED_MESSAGES, RECEIVED
+    logger.info("RB_deliver_msg called for message %s", msg.m)
     RECEIVED.add(msg.m)
     if msg.m not in ORDERED_MESSAGES:
         UNORDERED_MESSAGES.add(msg.m)
@@ -210,13 +212,23 @@ async def decide_consensus():
                         "k": CONSENSUS_K,
                     }
                 )
-                APPLYING_CONSENSUS = True
             else:
-                logger.info(
-                    "No messages satisfied the predicate for consensus k: %s",
-                    CONSENSUS_K,
+                # even if no messages satisfy carry the consesus forward with empty decision
+                DELIVERED_CONSENSUS_DECISIONS[CONSENSUS_K] = [
+                    {
+                        "server": NODE_ID,
+                        "decided": set(),
+                        "k": CONSENSUS_K,
+                    }
+                ]
+                add_to_consensus_decision_buffer(
+                    {
+                        "server": NODE_ID,
+                        "decided": [],
+                        "k": CONSENSUS_K,
+                    }
                 )
-                DECIDING_CONSENSUS = False
+            APPLYING_CONSENSUS = True
 
         await asyncio.sleep(0.001)
 
@@ -225,7 +237,7 @@ async def apply_consensus_decisions():
     logger.info("Applying consensus decisions task started.")
     global UNORDERED_MESSAGES, DELIVERED_CONSENSUS_DECISIONS, DECIDING_CONSENSUS, ORDERED_MESSAGES, APPLYING_CONSENSUS
     while True:
-        if DECIDING_CONSENSUS and len(DELIVERED_CONSENSUS_DECISIONS[CONSENSUS_K]) >= (
+        if APPLYING_CONSENSUS and len(DELIVERED_CONSENSUS_DECISIONS[CONSENSUS_K]) >= (
             NO_NODES / 2
         ):
             logger.info("Applying consensus decision for k: %s", CONSENSUS_K)
