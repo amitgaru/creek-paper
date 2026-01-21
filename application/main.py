@@ -6,6 +6,7 @@ import logging
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
 
+from state import State
 from req import Request, Message
 from custom_logger import setup_logging
 from models import (
@@ -34,6 +35,8 @@ NODE_ID = int(os.getenv("NODE_ID", "0"))
 
 logger.info("NO_NODES: %s", NO_NODES)
 logger.info("NODE_ID: %s", NODE_ID)
+
+STATE = State()
 
 CURR_EVENT_NO = 0
 CAUSAL_CTX = set()
@@ -133,20 +136,24 @@ def add_to_consensus_decision_buffer(msg: json):
 
 
 async def rollback():
+    global STATE, TO_BE_ROLLEDBACK
     logger.info("Rollback task started")
     while True:
         if TO_BE_ROLLEDBACK:
             r = TO_BE_ROLLEDBACK.pop(0)
             logger.info("Rolling back operation %s", r.id)
+            STATE.rollback(r)
         await asyncio.sleep(0.001)  # Simulate rollback delay
 
 
 async def execute():
+    global STATE, EXECUTED, TO_BE_EXECUTED, TO_BE_ROLLEDBACK
     logger.info("Execute task started")
     while True:
         if not TO_BE_ROLLEDBACK and TO_BE_EXECUTED:
             r = TO_BE_EXECUTED.pop(0)
             logger.info("Executing operation %s", r.id)
+            STATE.execute(r)
             EXECUTED.append(r)
         await asyncio.sleep(0.001)  # Simulate execution delay
 
@@ -255,6 +262,45 @@ async def apply_consensus_decisions():
         await asyncio.sleep(0.001)
 
 
+def commit(r: Request):
+    global TENTATIVE, COMMITTED
+    committed_ext = [x for x in TENTATIVE if x.is_subset_of(r.causal_ctx)]
+    new_tentative = [x for x in TENTATIVE if x not in committed_ext and x != r]
+    COMMITTED.extend(committed_ext + [r])
+    TENTATIVE = new_tentative
+    new_order = COMMITTED + TENTATIVE
+    adjust_execution(new_order)
+    # strong_ops_to_check = [x for x in committed_ext + r if x.strong_op]
+    # for op in strong_ops_to_check:
+    #     pass
+
+
+def CAB_deliver(req_id):
+    global TENTATIVE
+
+    logger.info("CAB_deliver called for message %s", req_id)
+    req = [r for r in TENTATIVE if r.id == req_id]
+    if not req:
+        return
+    r = req[0]
+    commit(r)
+
+
+async def process_ordered_messages():
+    logger.info("Processing ordered messages task started.")
+    global ORDERED_MESSAGES, UNORDERED_MESSAGES, RECEIVED
+    while True:
+        if (
+            ORDERED_MESSAGES
+            and ORDERED_MESSAGES[0] in RECEIVED
+            and predicate_check_dep(ORDERED_MESSAGES[0])
+        ):
+            req_id = ORDERED_MESSAGES.pop(0)
+            logger.info("Processing ordered message %s", req_id)
+            CAB_deliver(req_id)
+        await asyncio.sleep(0.001)
+
+
 async def print_status():
     logger.info("Status task started")
     while True:
@@ -275,6 +321,7 @@ async def print_status():
         logger.info("CONSENSUS_K: %s", CONSENSUS_K)
         logger.info("DECIDING_CONSENSUS: %s", DECIDING_CONSENSUS)
         logger.info("APPLYING_CONSENSUS: %s", APPLYING_CONSENSUS)
+        logger.info("STATE: %s", STATE)
         logger.info("\n------------------------End--------------------------\n")
         await asyncio.sleep(10)
 
@@ -287,6 +334,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(process_unordered_messages()),
         asyncio.create_task(decide_consensus()),
         asyncio.create_task(apply_consensus_decisions()),
+        asyncio.create_task(process_ordered_messages()),
         asyncio.create_task(print_status()),
     ]
     yield
