@@ -66,7 +66,9 @@ APPLYING_CONSENSUS = False
 def predicate_check_dep(req_id):
     global COMMITTED, TENTATIVE, CAUSAL_CTX
     r = [req for req in COMMITTED + TENTATIVE if req.id == req_id]
+    logger.info("Predicate check dep called for request %s, COMMITTED: %s, TENTATIVE: %s", req_id, COMMITTED, TENTATIVE)
     if not r:
+        logger.info("Request %s not found in COMMITTED or TENTATIVE", req_id)
         return False
     logger.info(
         "Checking predicate for request %s with causal context %s, causal context %s",
@@ -116,6 +118,7 @@ def RB_deliver_msg(msg):
 
 def predicate_test(req_id: int):
     global RECEIVED
+    logger.info("Predicate test called for message %s, RECEIVED: %s", req_id, RECEIVED)
     if req_id not in RECEIVED or not predicate_check_dep(req_id):
         return False
     return True
@@ -468,8 +471,8 @@ async def decide_cab(request: DecideCABModel):
 def insert_into_tentative(ready_to_schedule_ops):
     global TENTATIVE, COMMITTED
     for r in ready_to_schedule_ops:
-        previous = [x for x in TENTATIVE if x.is_lesser_than(r)]
-        subsequent = [x for x in TENTATIVE if r.is_lesser_than(x)]
+        previous = [x for x in TENTATIVE if x < r]
+        subsequent = [x for x in TENTATIVE if r < x]
         TENTATIVE = previous + [r] + subsequent
 
     new_order = COMMITTED + TENTATIVE

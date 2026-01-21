@@ -11,11 +11,11 @@ class GossipModel(BaseModel):
     id: list[int]
     op: list
     strong_op: bool
-    causal_ctx: list[int]
+    causal_ctx: list
 
 
 class GossipCABModel(BaseModel):
-    m: list[int]
+    m: list
     q: str
 
 

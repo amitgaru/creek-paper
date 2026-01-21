@@ -47,6 +47,13 @@ class Request:
     def __str__(self):
         return f"Request(id={self.id}, op={self.op}, strong_op={self.strong_op}, causal_ctx={self.causal_ctx})"
 
+    def __eq__(self, other: "Request"):
+        return self.id == other.id
+
+    def __hash__(self):
+        return hash(self.id)
+
+    __repr__ = __str__
 
 class Message:
     def __init__(self, m: tuple[int], q: str):
