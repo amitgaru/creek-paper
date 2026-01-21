@@ -66,7 +66,12 @@ APPLYING_CONSENSUS = False
 def predicate_check_dep(req_id):
     global COMMITTED, TENTATIVE, CAUSAL_CTX
     r = [req for req in COMMITTED + TENTATIVE if req.id == req_id]
-    logger.info("Predicate check dep called for request %s, COMMITTED: %s, TENTATIVE: %s", req_id, COMMITTED, TENTATIVE)
+    logger.info(
+        "Predicate check dep called for request %s, COMMITTED: %s, TENTATIVE: %s",
+        req_id,
+        COMMITTED,
+        TENTATIVE,
+    )
     if not r:
         logger.info("Request %s not found in COMMITTED or TENTATIVE", req_id)
         return False
@@ -385,7 +390,7 @@ async def gossip(request: GossipModel):
             id=request.id,
             op=request.op,
             strong_op=request.strong_op,
-            causal_ctx=request.causal_ctx,
+            causal_ctx=[tuple(c) for c in request.causal_ctx],
         )
         add_to_buffer(r.to_json())
         DELIVERED.add(r.id)
