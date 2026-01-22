@@ -10,7 +10,9 @@ The codebase implements the algorithm presented in the ICDCN 2026 Conference tit
 
 ## Sending Requests to the Creek Nodes
 
-### To send PUT request to creek node 1 with Weak Operation
+The system is currently setup with 2 creek nodes.
+
+### To send PUT request to Creek Node 1 with Weak Operation
   
   ```bash
   curl -X POST http://localhost:8001/invoke \                                                                                
@@ -18,10 +20,27 @@ The codebase implements the algorithm presented in the ICDCN 2026 Conference tit
   -d '{"op": ["PUT", "key", "value"], "strong_op": false}'
   ```
 
-### To send PUT request to creek node 1 with Strong Operation
+### To send PUT request to Creek Node 1 with Strong Operation
 
 ```bash
   curl -X POST http://localhost:8001/invoke \                                                                                
+  -H "Content-Type: application/json" \
+  -d '{"op": ["PUT", "key", "value"], "strong_op": true}'
+  ```
+
+
+### To send PUT request to Creek Node 2 with Weak Operation
+  
+  ```bash
+  curl -X POST http://localhost:8002/invoke \                                                                                
+  -H "Content-Type: application/json" \
+  -d '{"op": ["PUT", "key", "value"], "strong_op": false}'
+  ```
+
+### To send PUT request to Creek Node 2 with Strong Operation
+
+```bash
+  curl -X POST http://localhost:8002/invoke \                                                                                
   -H "Content-Type: application/json" \
   -d '{"op": ["PUT", "key", "value"], "strong_op": true}'
   ```
