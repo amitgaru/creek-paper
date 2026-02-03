@@ -13,7 +13,7 @@ Creek is a Geo-replicated Key-Value store where one can achieve Linearizability 
 
 ## Sending Requests to the Creek Nodes
 
-The system is currently set up with 2 creek nodes for learning purposes. However, it can be generalized with modification in docker compose file for N creek nodes.
+The system is currently set up with 2 creek nodes for learning purposes. However, it can be generalized by modification in docker compose file for the N creek nodes architecture.
 
 ### To send a PUT request to Creek Node 1 with Weak Operation
   
